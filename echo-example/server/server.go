@@ -52,11 +52,26 @@ func (s *ChatServer) handleClient(conn net.Conn) {
 	defer conn.Close()
 	reader := bufio.NewReader(conn)
 
-	conn.Write([]byte("Enter your name: "))
-	name, _ := reader.ReadString('\n')
-	name = strings.TrimSpace(name)
+	var name string
+	for {
+		conn.Write([]byte("Enter your name: "))
+		inputName, err := reader.ReadString('\n')
+		if err != nil {
+			return
+		}
+		inputName = strings.TrimSpace(inputName)
 
-	//Memasukkan nama client ke dalam map
+		// Cek apakah nama sudah digunakan
+		if s.isNameTaken(inputName) {
+			conn.Write([]byte("Username already taken, please choose another one.\n"))
+			continue
+		}
+
+		name = inputName
+		break
+	}
+
+	// Simpan client setelah username valid
 	s.mu.Lock()
 	s.clients[conn] = name
 	s.mu.Unlock()
@@ -88,4 +103,16 @@ func (s *ChatServer) broadcast(message string, sender net.Conn) {
 			conn.Write([]byte(message))
 		}
 	}
+}
+
+// Mengecek apakah nama sudah dipakai client lain
+func (s *ChatServer) isNameTaken(name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, existingName := range s.clients {
+		if existingName == name {
+			return true
+		}
+	}
+	return false
 }
