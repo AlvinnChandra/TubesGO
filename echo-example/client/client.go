@@ -31,12 +31,9 @@ func main() {
 	// Mengirim nama pengguna ke server
 	conn.Write([]byte(name + "\n"))
 
-	// Menampilkan pesan selamat datang
-	fmt.Printf("Welcome %s! Type your message\n", name)
-
 	// Loop untuk membaca dan mengirim pesan
 	for {
-		fmt.Printf("[%s] : ", name)
+		// fmt.Printf("[%s] : ", name)
 		message, _ := reader.ReadString('\n')
 		conn.Write([]byte(message)) // Kirim pesan ke server
 	}
