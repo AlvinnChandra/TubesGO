@@ -19,19 +19,38 @@ func main() {
 	fmt.Println("Connected to server!")
 
 	// Fungsi goroutine untuk membaca pesan dari server
-	go readMessages(conn)
 
+	connectionReader := bufio.NewReader(conn)
 	reader := bufio.NewReader(os.Stdin)
 
 	// Mengambil nama pengguna dari input dan mengirim ke server
-	fmt.Print("Enter your name: ")
-	name, _ := reader.ReadString('\n')
-	name = strings.TrimSpace(name)
 
-	// Mengirim nama pengguna ke server
-	conn.Write([]byte(name + "\n"))
+	for {
+		fmt.Print("Enter your name: \n")
+		name, err := reader.ReadString('\n')
 
-	// Loop untuk membaca dan mengirim pesan
+		if err != nil {
+			fmt.Println("Cannot read your input, please try again!\n")
+			continue
+		}
+		name = strings.TrimSpace(name)
+
+		conn.Write([]byte(name + "\n"))
+
+		//Untuk mengetahui jika nama valid, ambil response dari server dan cek jika ada balasan dari server
+		msg, _ := connectionReader.ReadString('\n')
+		msg = strings.TrimSpace(msg)
+
+		fmt.Printf("%s\n", msg)
+		if strings.Contains(msg, "Welcome") {
+			break
+		} else {
+			continue
+		}
+	}
+	go readMessages(conn)
+
+	// Loop untuk mengirim pesan atau perintah ke server
 	for {
 		// fmt.Printf("[%s] : ", name)
 		message, _ := reader.ReadString('\n')
