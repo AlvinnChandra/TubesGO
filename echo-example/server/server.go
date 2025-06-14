@@ -66,13 +66,13 @@ func (s *ChatServer) handleClient(conn net.Conn) {
 
 		// Cek apakah nama sudah digunakan
 		if s.isNameTaken(inputName) {
-			conn.Write([]byte("Username already taken, please choose another one.\n"))
+			conn.Write([]byte("Nama pengguna sudah digunakan, silakan pilih nama lain.\n"))
 			continue
 		} else if inputName == "" {
-			conn.Write([]byte("You need to input a name!\n"))
+			conn.Write([]byte("Nama pengguna tidak boleh kosong!\n"))
 			continue
 		} else {
-			conn.Write([]byte(fmt.Sprintf("Welcome %s!\n", inputName)))
+			conn.Write([]byte(fmt.Sprintf("Selamat datang di MariChatting, %s!\n", inputName)))
 			name = inputName
 			break
 		}
@@ -85,19 +85,19 @@ func (s *ChatServer) handleClient(conn net.Conn) {
 	s.mu.Unlock()
 
 	fmt.Printf("New client	 connected: %s\n", name)
-	s.broadcast(fmt.Sprintf("%s has joined the Application.\n", name), conn)
-
-	conn.Write([]byte("Selamat datang di MariChatting, " + name + "!\n"))
+	s.broadcast(fmt.Sprintf("%s telah masuk ke aplikasi MariChatting.\n", name), conn)
 
 	for {
 		conn.Write([]byte(
-			"Anda dapat memilih fitur-fitur berikut:\n" +
+			"==========================================\n" +
+				"Anda dapat memilih fitur-fitur berikut:\n" +
 				"1. Kirim pesan ke semua orang\n" +
 				"2. Pilih chatroom\n" +
 				"3. Gabung dengan chatroom\n" +
 				"4. Tinggalkan chatroom\n" +
 				"5. Buat chatroom baru\n" +
-				"6. Keluar dari MariChatting\n"))
+				"6. Keluar dari MariChatting\n" +
+				"==========================================\n"))
 
 		pilihan, err := reader.ReadString('\n')
 		if err != nil {
@@ -129,22 +129,40 @@ func (s *ChatServer) handlePilihan(conn net.Conn, pilihan string, wg *sync.WaitG
 		wgChatroom.Wait()
 	case "2":
 		for {
-			conn.Write([]byte("Chatroom yang tersedia:\n"))
+			room_joined_message := "Chatroom yang tersedia:\n"
+			room_joined := 0
+			reader := bufio.NewReader(conn)
+
 			for chatroomName := range s.rooms {
 				_, exist := s.rooms[chatroomName][conn]
 				if chatroomName == "general" || !exist {
 					continue
 				}
-				conn.Write([]byte(fmt.Sprintf("%s\n", chatroomName)))
+				room_joined += 1
+				room_joined_message += fmt.Sprintf("%s\n", chatroomName)
+
 			}
 
-			reader := bufio.NewReader(conn)
+			//Kalo belum masuk ke room manapun
+			if room_joined > 0 {
+				conn.Write([]byte(room_joined_message))
+			} else {
+				conn.Write([]byte("Anda belum masuk ke room apapun, silakan pilih opsi yang lain.\nTekan enter untuk melanjutkan\n"))
+				_, _ = reader.ReadString('\n')
+				break
+			}
+
 			chatroom, err := reader.ReadString('\n')
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Failed to read chatroom in case 2!\n")
 				os.Exit(1)
 			}
 			chatroom = strings.TrimSpace(chatroom)
+
+			if chatroom == "" {
+				conn.Write([]byte("Nama room tidak boleh kosong!!\n"))
+				continue
+			}
 
 			_, existRoom := s.rooms[chatroom]
 			_, existUser := s.rooms[chatroom][conn]
@@ -161,23 +179,37 @@ func (s *ChatServer) handlePilihan(conn net.Conn, pilihan string, wg *sync.WaitG
 		}
 	case "3":
 		for {
-			conn.Write([]byte("Silahkan pilih chatroom yang ingin Anda masuki:\n"))
+			room_possible_to_join_message := "Silahkan pilih chatroom yang ingin Anda masuki:\n"
+			room_possible_to_join := 0
+			reader := bufio.NewReader(conn)
 
 			for chatroomName := range s.rooms {
 				_, exist := s.rooms[chatroomName][conn]
 				if chatroomName == "general" || exist {
 					continue
 				}
-				conn.Write([]byte(fmt.Sprintf("%s\n", chatroomName)))
+				room_possible_to_join += 1
+				room_possible_to_join_message += fmt.Sprintf("%s\n", chatroomName)
 			}
 
-			reader := bufio.NewReader(conn)
+			if room_possible_to_join > 0 {
+				conn.Write([]byte(room_possible_to_join_message))
+			} else {
+				conn.Write([]byte("Anda telah memasuki semua chatroom yang tersedia.\nTekan enter untuk melanjutkan\n"))
+				_, _ = reader.ReadString('\n')
+				break
+			}
+
 			chatroom, err := reader.ReadString('\n')
 			if err != nil {
 				return
 			}
 
 			chatroom = strings.TrimSpace(chatroom)
+			if chatroom == "" {
+				conn.Write([]byte("Nama room tidak boleh kosong!!\n"))
+				continue
+			}
 
 			if _, exist := s.rooms[chatroom][conn]; exist {
 				conn.Write([]byte("Anda sudah berada di chatroom ini. Silahkan pilih chatroom lain.\n"))
@@ -190,29 +222,48 @@ func (s *ChatServer) handlePilihan(conn net.Conn, pilihan string, wg *sync.WaitG
 					wgJoinLeave.Wait()
 					break
 				} else {
-					conn.Write([]byte("Chatroom tidak ditemukan. Silakan coba lagi.\n"))
+					conn.Write([]byte(fmt.Sprintf("Tidak ditemukkan chatroom dengan nama \"%s\".Silakan coba lagi.\n", chatroom)))
 					continue
 				}
 			}
 		}
 	case "4":
 		for {
-			conn.Write([]byte("Silahkan pilih chatroom yang ingin Anda tinggalkan:\n"))
+			room_joined_message := "Silahkan pilih chatroom yang ingin Anda tinggalkan:\n"
+			room_joined := 0
+			reader := bufio.NewReader(conn)
 
 			for chatroomName := range s.rooms {
 				_, exist := s.rooms[chatroomName][conn]
 				if chatroomName == "general" || !exist {
 					continue
 				}
-				conn.Write([]byte(fmt.Sprintf("%s\n", chatroomName)))
+				room_joined += 1
+				room_joined_message += fmt.Sprintf("%s\n", chatroomName)
 			}
 
-			reader := bufio.NewReader(conn)
+			//Kalo belum masuk ke room manapun selain general
+			if room_joined > 0 {
+				conn.Write([]byte(room_joined_message))
+			} else {
+				conn.Write([]byte("Anda belum masuk ke room apapun, silakan pilih opsi yang lain.\nTekan enter untuk melanjutkan\n"))
+				_, _ = reader.ReadString('\n')
+				break
+			}
 			chatroom, err := reader.ReadString('\n')
 			if err != nil {
 				return
 			}
 			chatroom = strings.TrimSpace(chatroom)
+
+			if chatroom == "" {
+				conn.Write([]byte("Anda tidak mengisi nama chatroom yang ingin Anda tinggalkan!!\n"))
+				continue
+			} else if chatroom == "general" {
+				conn.Write([]byte("Anda tidak bisa keluar dari room general!!\n"))
+				continue
+
+			}
 
 			_, existsRoom := s.rooms[chatroom]
 			_, existUser := s.rooms[chatroom][conn]
@@ -239,6 +290,12 @@ func (s *ChatServer) handlePilihan(conn net.Conn, pilihan string, wg *sync.WaitG
 			}
 
 			chatroomName = strings.TrimSpace(chatroomName)
+
+			if chatroomName == "" {
+				conn.Write([]byte("Nama chatroom tidak boleh kosong!!\n"))
+				continue
+			}
+
 			if _, exists := s.rooms[chatroomName]; exists {
 				conn.Write([]byte("Chatroom dengan nama tersebut sudah ada. Silakan pilih nama lain.\n"))
 				continue
@@ -297,6 +354,7 @@ func (s *ChatServer) handleChatroom(conn net.Conn, wg *sync.WaitGroup, roomName 
 
 	reader := bufio.NewReader(conn)
 	conn.Write([]byte(fmt.Sprintf("Selamat datang di room %s! Silahkan ketik pesan Anda!\nKetik '/exit' untuk keluar dari room.\n", roomName)))
+	s.broadcastPerRoom(fmt.Sprintf("%s telah masuk ke chatroom %s.\n", clientName, roomName), roomName, conn)
 	for {
 		message, err := reader.ReadString('\n')
 		if err != nil {
@@ -309,7 +367,7 @@ func (s *ChatServer) handleChatroom(conn net.Conn, wg *sync.WaitGroup, roomName 
 			s.rooms[roomName][conn] = false
 			s.mu.Unlock()
 			conn.Write([]byte(fmt.Sprintf("Anda telah keluar dari chatroom %s.\n", roomName)))
-			s.broadcastPerRoom(fmt.Sprintf("%s Telah keluar dari chatroom %s.\n", clientName, roomName), roomName, conn)
+			s.broadcastPerRoom(fmt.Sprintf("%s telah keluar dari chatroom %s.\n", clientName, roomName), roomName, conn)
 			break
 		}
 

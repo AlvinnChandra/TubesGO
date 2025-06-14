@@ -42,7 +42,7 @@ func main() {
 		msg = strings.TrimSpace(msg)
 
 		fmt.Printf("%s\n", msg)
-		if strings.Contains(msg, "Welcome") {
+		if strings.Contains(msg, "Selamat datang") {
 			break
 		} else {
 			continue
