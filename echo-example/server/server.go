@@ -123,10 +123,6 @@ func (s *ChatServer) handlePilihan(conn net.Conn, pilihan string, wg *sync.WaitG
 	defer wg.Done()
 	switch pilihan {
 	case "1":
-		s.mu.Lock()
-		s.rooms["general"][conn] = true
-		s.mu.Unlock()
-
 		wgChatroom := sync.WaitGroup{}
 		wgChatroom.Add(1)
 		go s.handleChatroom(conn, &wgChatroom, "general")
@@ -145,9 +141,11 @@ func (s *ChatServer) handlePilihan(conn net.Conn, pilihan string, wg *sync.WaitG
 			reader := bufio.NewReader(conn)
 			chatroom, err := reader.ReadString('\n')
 			if err != nil {
-				return
+				fmt.Fprintf(os.Stderr, "Failed to read chatroom in case 2!\n")
+				os.Exit(1)
 			}
 			chatroom = strings.TrimSpace(chatroom)
+
 			_, existRoom := s.rooms[chatroom]
 			_, existUser := s.rooms[chatroom][conn]
 			if !existRoom || !existUser {
@@ -178,7 +176,7 @@ func (s *ChatServer) handlePilihan(conn net.Conn, pilihan string, wg *sync.WaitG
 			if err != nil {
 				return
 			}
-			fmt.Print("tes error")
+
 			chatroom = strings.TrimSpace(chatroom)
 
 			if _, exist := s.rooms[chatroom][conn]; exist {
@@ -236,7 +234,8 @@ func (s *ChatServer) handlePilihan(conn net.Conn, pilihan string, wg *sync.WaitG
 			reader := bufio.NewReader(conn)
 			chatroomName, err := reader.ReadString('\n')
 			if err != nil {
-				return
+				fmt.Fprintf(os.Stderr, "Failed to read chatroomName in case 5!\n")
+				os.Exit(1)
 			}
 
 			chatroomName = strings.TrimSpace(chatroomName)
@@ -268,24 +267,34 @@ func (s *ChatServer) handlePilihan(conn net.Conn, pilihan string, wg *sync.WaitG
 }
 
 func (s *ChatServer) handleJoinLeaveChatroom(conn net.Conn, wg *sync.WaitGroup, chatroom string, operasi string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	defer wg.Done()
 
 	switch operasi {
 	case "join":
+		s.mu.Lock()
 		s.rooms[chatroom][conn] = false
+		dummy := s.clients[conn]
+		s.mu.Unlock()
 		conn.Write([]byte(fmt.Sprintf("Anda telah bergabung dalam chatroom %s.\n", chatroom)))
-		s.broadcastPerRoom(fmt.Sprintf("%s telah bergabung dalam chatroom %s.\n", s.clients[conn], chatroom), chatroom, conn)
+		s.broadcastPerRoom(fmt.Sprintf("%s telah bergabung dalam chatroom %s.\n", dummy, chatroom), chatroom, conn)
 	case "leave":
+		s.mu.Lock()
 		delete(s.rooms[chatroom], conn)
+		dummy := s.clients[conn]
+		s.mu.Unlock()
 		conn.Write([]byte(fmt.Sprintf("Anda telah meninggalkan chatroom %s.\n", chatroom)))
-		s.broadcastPerRoom(fmt.Sprintf("%s tidak lagi tergabung dalam chatroom %s.\n", s.clients[conn], chatroom), chatroom, conn)
+		s.broadcastPerRoom(fmt.Sprintf("%s tidak lagi tergabung dalam chatroom %s.\n", dummy, chatroom), chatroom, conn)
 	}
 }
 
 func (s *ChatServer) handleChatroom(conn net.Conn, wg *sync.WaitGroup, roomName string) {
 	defer wg.Done()
+	clientName := s.clients[conn]
+
+	s.mu.Lock()
+	s.rooms[roomName][conn] = true
+	s.mu.Unlock()
+
 	reader := bufio.NewReader(conn)
 	conn.Write([]byte(fmt.Sprintf("Selamat datang di room %s! Silahkan ketik pesan Anda!\nKetik '/exit' untuk keluar dari room.\n", roomName)))
 	for {
@@ -300,11 +309,11 @@ func (s *ChatServer) handleChatroom(conn net.Conn, wg *sync.WaitGroup, roomName 
 			s.rooms[roomName][conn] = false
 			s.mu.Unlock()
 			conn.Write([]byte(fmt.Sprintf("Anda telah keluar dari chatroom %s.\n", roomName)))
-			s.broadcastPerRoom(fmt.Sprintf("%s Telah keluar dari chatroom %s.\n", s.clients[conn], roomName), roomName, conn)
+			s.broadcastPerRoom(fmt.Sprintf("%s Telah keluar dari chatroom %s.\n", clientName, roomName), roomName, conn)
 			break
 		}
 
-		s.broadcastPerRoom(fmt.Sprintf("[%s]: %s", s.clients[conn], message), roomName, conn)
+		s.broadcastPerRoom(fmt.Sprintf("[%s]: %s", clientName, message), roomName, conn)
 	}
 }
 
@@ -337,13 +346,15 @@ func (s *ChatServer) broadcast(message string, sender net.Conn) {
 
 func (s *ChatServer) handleCreateChatroom(conn net.Conn, wg *sync.WaitGroup, chatroomName string) {
 	defer wg.Done()
-	s.mu.Lock()
-	defer s.mu.Unlock()
 
+	s.mu.Lock()
 	s.rooms[chatroomName] = make(map[net.Conn]bool)
 	s.rooms[chatroomName][conn] = false
+	clientName := s.clients[conn]
+	s.mu.Unlock()
+
 	conn.Write([]byte(fmt.Sprintf("Chatroom %s telah berhasil dibuat.\n", chatroomName)))
-	s.broadcast(fmt.Sprintf("%s telah membuat chatroom baru: %s", s.clients[conn], chatroomName), conn)
+	s.broadcast(fmt.Sprintf("%s telah membuat chatroom baru: %s", clientName, chatroomName), conn)
 }
 
 // Mengecek apakah nama sudah dipakai client lain

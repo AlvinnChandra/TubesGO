@@ -30,7 +30,7 @@ func main() {
 		name, err := reader.ReadString('\n')
 
 		if err != nil {
-			fmt.Println("Cannot read your input, please try again!\n")
+			fmt.Println("Cannot read your input, please try again!")
 			continue
 		}
 		name = strings.TrimSpace(name)
