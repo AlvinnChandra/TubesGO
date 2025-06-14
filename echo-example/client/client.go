@@ -16,7 +16,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer conn.Close()
-	fmt.Println("Connected to server!")
+	fmt.Println("Telah tersambung ke server!")
 
 	// Fungsi goroutine untuk membaca pesan dari server
 
@@ -26,7 +26,7 @@ func main() {
 	// Mengambil nama pengguna dari input dan mengirim ke server
 
 	for {
-		fmt.Print("Enter your name: \n")
+		fmt.Print("Masukkan nama pengguna: \n")
 		name, err := reader.ReadString('\n')
 
 		if err != nil {
@@ -42,7 +42,7 @@ func main() {
 		msg = strings.TrimSpace(msg)
 
 		fmt.Printf("%s\n", msg)
-		if strings.Contains(msg, "Selamat datang") {
+		if strings.Contains(msg, "Selamat datang di MariChatting") {
 			break
 		} else {
 			continue
