@@ -60,7 +60,8 @@ func (s *ChatServer) handleClient(conn net.Conn) {
 		inputName, err := reader.ReadString('\n')
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to read inputName!\n")
-			os.Exit(1)
+			// Jangan keluar dari server, cukup putuskan koneksi client ini
+			return
 		}
 		inputName = strings.TrimSpace(inputName)
 
@@ -84,317 +85,322 @@ func (s *ChatServer) handleClient(conn net.Conn) {
 	s.rooms["general"][conn] = false
 	s.mu.Unlock()
 
-	fmt.Printf("New client	 connected: %s\n", name)
-	s.broadcast(fmt.Sprintf("%s telah masuk ke aplikasi MariChatting.\n", name), conn)
+	fmt.Printf("New client connected: %s\n", name)
+	s.broadcast(fmt.Sprintf("\n[PEMBERITAHUAN] %s telah masuk ke aplikasi MariChatting.\n", name), conn)
 
+	// Loop utama untuk menampilkan menu setelah login berhasil
 	for {
 		conn.Write([]byte(
 			"==========================================\n" +
-				"Anda dapat memilih fitur-fitur berikut:\n" +
-				"1. Kirim pesan ke semua orang\n" +
-				"2. Pilih chatroom\n" +
+				"Anda dapat memilih fitur-fitur berikut: (Ketik 1-6)\n" +
+				"1. Kirim pesan ke semua orang (General Chat)\n" +
+				"2. Pilih chatroom untuk mengirim pesan\n" +
 				"3. Gabung dengan chatroom\n" +
 				"4. Tinggalkan chatroom\n" +
 				"5. Buat chatroom baru\n" +
 				"6. Keluar dari MariChatting\n" +
-				"==========================================\n"))
+				"==========================================\n" + " "))
 
 		pilihan, err := reader.ReadString('\n')
 		if err != nil {
 			fmt.Printf("%s disconnected.\n", name)
-			s.mu.Lock()
-			delete(s.clients, conn)
-			s.mu.Unlock()
-			return
-		} else {
-			// Menghapus newline dan spasi dari pilihan
-			pilihan = strings.TrimSpace(pilihan)
-
-			wg := sync.WaitGroup{}
-			wg.Add(1)
-			go s.handlePilihan(conn, pilihan, &wg)
-			wg.Wait()
-			continue
+			s.handleDisconnect(conn)
+			return // Keluar dari loop dan goroutine
 		}
+
+		pilihan = strings.TrimSpace(pilihan)
+		// Jika pilihan adalah 6 (keluar), tangani dan return
+		if pilihan == "6" {
+			conn.Write([]byte("Anda memilih untuk keluar dari MariChatting.\n"))
+			s.broadcast(fmt.Sprintf("\n[PEMBERITAHUAN] %s telah meninggalkan aplikasi MariChatting.\n", s.clients[conn]), conn)
+			s.handleDisconnect(conn)
+			return // Keluar dari loop dan goroutine
+		}
+
+		// Buat WaitGroup untuk menangani pilihan
+		wg := sync.WaitGroup{}
+		wg.Add(1)
+		go s.handlePilihan(conn, pilihan, &wg)
+		wg.Wait()
+		// Setelah handlePilihan selesai, loop akan berlanjut dan menampilkan menu lagi
 	}
 }
 
 func (s *ChatServer) handlePilihan(conn net.Conn, pilihan string, wg *sync.WaitGroup) {
 	defer wg.Done()
+	reader := bufio.NewReader(conn)
+
 	switch pilihan {
 	case "1":
+		// Langsung masuk ke chatroom "general"
 		wgChatroom := sync.WaitGroup{}
 		wgChatroom.Add(1)
 		go s.handleChatroom(conn, &wgChatroom, "general")
 		wgChatroom.Wait()
 	case "2":
+		// Loop untuk memilih chatroom yang sudah di-join
 		for {
-			room_joined_message := "Chatroom yang tersedia:\n"
-			room_joined := 0
-			reader := bufio.NewReader(conn)
-
+			room_joined_message := "Pilih chatroom yang pesannya ingin Anda lihat:\n(Ketik /kembali untuk ke menu utama)\n"
+			var joinedRooms []string
+			s.mu.Lock()
 			for chatroomName := range s.rooms {
-				_, exist := s.rooms[chatroomName][conn]
-				if chatroomName == "general" || !exist {
-					continue
+				if _, exist := s.rooms[chatroomName][conn]; exist && chatroomName != "general" {
+					joinedRooms = append(joinedRooms, chatroomName)
+					room_joined_message += fmt.Sprintf("- %s\n", chatroomName)
 				}
-				room_joined += 1
-				room_joined_message += fmt.Sprintf("%s\n", chatroomName)
-
 			}
+			s.mu.Unlock()
 
-			//Kalo belum masuk ke room manapun
-			if room_joined > 0 {
-				conn.Write([]byte(room_joined_message))
-			} else {
-				conn.Write([]byte("Anda belum masuk ke room apapun, silakan pilih opsi yang lain.\nTekan enter untuk melanjutkan\n"))
+			if len(joinedRooms) == 0 {
+				conn.Write([]byte("Anda belum masuk ke room manapun selain General. (Gabung terlebih dahulu dengan room yang tersedia (Ketik 3))\nTekan enter untuk kembali ke menu utama.\n"))
 				_, _ = reader.ReadString('\n')
-				break
+				return
 			}
 
-			chatroom, err := reader.ReadString('\n')
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to read chatroom in case 2!\n")
-				os.Exit(1)
-			}
+			conn.Write([]byte(room_joined_message))
+			chatroom, _ := reader.ReadString('\n')
 			chatroom = strings.TrimSpace(chatroom)
 
+			if chatroom == "/kembali" {
+				return
+			}
 			if chatroom == "" {
 				conn.Write([]byte("Nama room tidak boleh kosong!!\n"))
 				continue
 			}
 
-			_, existRoom := s.rooms[chatroom]
+			s.mu.Lock()
 			_, existUser := s.rooms[chatroom][conn]
-			if !existRoom || !existUser {
-				conn.Write([]byte("Chatroom tidak ditemukan. Silahkan pilih chatroom yang tersedia.\n"))
+			s.mu.Unlock()
+			if !existUser || chatroom == "general" {
+				conn.Write([]byte("Anda belum bergabung atau chatroom tidak valid. Silahkan pilih chatroom yang tersedia.\n"))
 				continue
 			} else {
 				wgChatroom := sync.WaitGroup{}
 				wgChatroom.Add(1)
 				go s.handleChatroom(conn, &wgChatroom, chatroom)
 				wgChatroom.Wait()
-				break
+				return // Kembali ke menu utama setelah keluar dari room
 			}
 		}
 	case "3":
+		// Loop untuk bergabung ke chatroom yang ada
 		for {
-			room_possible_to_join_message := "Silahkan pilih chatroom yang ingin Anda masuki:\n"
-			room_possible_to_join := 0
-			reader := bufio.NewReader(conn)
-
+			room_possible_to_join_message := "Silahkan pilih chatroom yang ingin Anda masuki:\n(Ketik /kembali untuk ke menu utama)\n"
+			var possibleRooms []string
+			s.mu.Lock()
 			for chatroomName := range s.rooms {
-				_, exist := s.rooms[chatroomName][conn]
-				if chatroomName == "general" || exist {
-					continue
+				if _, exist := s.rooms[chatroomName][conn]; !exist {
+					possibleRooms = append(possibleRooms, chatroomName)
+					room_possible_to_join_message += fmt.Sprintf("- %s\n", chatroomName)
 				}
-				room_possible_to_join += 1
-				room_possible_to_join_message += fmt.Sprintf("%s\n", chatroomName)
 			}
+			s.mu.Unlock()
 
-			if room_possible_to_join > 0 {
-				conn.Write([]byte(room_possible_to_join_message))
-			} else {
-				conn.Write([]byte("Anda telah memasuki semua chatroom yang tersedia.\nTekan enter untuk melanjutkan\n"))
+			if len(possibleRooms) == 0 {
+				conn.Write([]byte("Anda telah memasuki semua chatroom yang tersedia.\nTekan enter untuk kembali ke menu utama.\n"))
 				_, _ = reader.ReadString('\n')
-				break
-			}
-
-			chatroom, err := reader.ReadString('\n')
-			if err != nil {
 				return
 			}
 
+			conn.Write([]byte(room_possible_to_join_message))
+			chatroom, _ := reader.ReadString('\n')
 			chatroom = strings.TrimSpace(chatroom)
+
+			if chatroom == "/kembali" {
+				return
+			}
 			if chatroom == "" {
 				conn.Write([]byte("Nama room tidak boleh kosong!!\n"))
 				continue
 			}
 
-			if _, exist := s.rooms[chatroom][conn]; exist {
+			s.mu.Lock()
+			_, roomExists := s.rooms[chatroom]
+			_, userInRoom := s.rooms[chatroom][conn]
+			s.mu.Unlock()
+
+			if !roomExists {
+				conn.Write([]byte(fmt.Sprintf("Tidak ditemukan chatroom dengan nama \"%s\". Silakan coba lagi.\n", chatroom)))
+				continue
+			}
+			if userInRoom {
 				conn.Write([]byte("Anda sudah berada di chatroom ini. Silahkan pilih chatroom lain.\n"))
 				continue
-			} else {
-				if _, exists := s.rooms[chatroom]; exists {
-					wgJoinLeave := sync.WaitGroup{}
-					wgJoinLeave.Add(1)
-					go s.handleJoinLeaveChatroom(conn, &wgJoinLeave, chatroom, "join")
-					wgJoinLeave.Wait()
-					break
-				} else {
-					conn.Write([]byte(fmt.Sprintf("Tidak ditemukkan chatroom dengan nama \"%s\".Silakan coba lagi.\n", chatroom)))
-					continue
-				}
 			}
+
+			s.handleJoinLeaveChatroom(conn, chatroom, "join")
+			return // Kembali ke menu utama setelah berhasil join
 		}
 	case "4":
+		// Loop untuk meninggalkan chatroom
 		for {
-			room_joined_message := "Silahkan pilih chatroom yang ingin Anda tinggalkan:\n"
-			room_joined := 0
-			reader := bufio.NewReader(conn)
-
+			room_joined_message := "Silahkan pilih chatroom yang ingin Anda tinggalkan:\n(Ketik /kembali untuk ke menu utama)\n"
+			var joinedRooms []string
+			s.mu.Lock()
 			for chatroomName := range s.rooms {
-				_, exist := s.rooms[chatroomName][conn]
-				if chatroomName == "general" || !exist {
-					continue
+				if _, exist := s.rooms[chatroomName][conn]; exist && chatroomName != "general" {
+					joinedRooms = append(joinedRooms, chatroomName)
+					room_joined_message += fmt.Sprintf("- %s\n", chatroomName)
 				}
-				room_joined += 1
-				room_joined_message += fmt.Sprintf("%s\n", chatroomName)
 			}
+			s.mu.Unlock()
 
-			//Kalo belum masuk ke room manapun selain general
-			if room_joined > 0 {
-				conn.Write([]byte(room_joined_message))
-			} else {
-				conn.Write([]byte("Anda belum masuk ke room apapun, silakan pilih opsi yang lain.\nTekan enter untuk melanjutkan\n"))
+			if len(joinedRooms) == 0 {
+				conn.Write([]byte("Anda belum masuk ke room apapun untuk ditinggalkan.\nTekan enter untuk kembali ke menu utama.\n"))
 				_, _ = reader.ReadString('\n')
-				break
-			}
-			chatroom, err := reader.ReadString('\n')
-			if err != nil {
 				return
 			}
+
+			conn.Write([]byte(room_joined_message))
+			chatroom, _ := reader.ReadString('\n')
 			chatroom = strings.TrimSpace(chatroom)
 
+			if chatroom == "/kembali" {
+				return
+			}
 			if chatroom == "" {
-				conn.Write([]byte("Anda tidak mengisi nama chatroom yang ingin Anda tinggalkan!!\n"))
+				conn.Write([]byte("Nama chatroom tidak boleh kosong!\n"))
 				continue
-			} else if chatroom == "general" {
+			}
+			if chatroom == "general" {
 				conn.Write([]byte("Anda tidak bisa keluar dari room general!!\n"))
 				continue
-
 			}
 
+			s.mu.Lock()
 			_, existsRoom := s.rooms[chatroom]
 			_, existUser := s.rooms[chatroom][conn]
+			s.mu.Unlock()
+
 			if !existsRoom || !existUser {
-				conn.Write([]byte("Chatroom tidak ditemukan. Silakan coba lagi.\n"))
+				conn.Write([]byte("Chatroom tidak ditemukan atau Anda bukan member. Silakan coba lagi.\n"))
 				continue
-			} else {
-				wgJoinLeave := sync.WaitGroup{}
-				wgJoinLeave.Add(1)
-				go s.handleJoinLeaveChatroom(conn, &wgJoinLeave, chatroom, "leave")
-				wgJoinLeave.Wait()
-				break
 			}
 
+			s.handleJoinLeaveChatroom(conn, chatroom, "leave")
+			return // Kembali ke menu utama setelah berhasil leave
 		}
 	case "5":
+		// Loop untuk membuat chatroom baru
 		for {
-			conn.Write([]byte("Silahkan masukkan nama chatroom yang ingin anda buat.\n"))
-			reader := bufio.NewReader(conn)
-			chatroomName, err := reader.ReadString('\n')
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to read chatroomName in case 5!\n")
-				os.Exit(1)
-			}
-
+			conn.Write([]byte("Silahkan masukkan nama chatroom yang ingin anda buat:\n(Ketik /kembali untuk ke menu utama)\n"))
+			chatroomName, _ := reader.ReadString('\n')
 			chatroomName = strings.TrimSpace(chatroomName)
 
+			if chatroomName == "/kembali" {
+				return
+			}
 			if chatroomName == "" {
 				conn.Write([]byte("Nama chatroom tidak boleh kosong!!\n"))
 				continue
 			}
 
-			if _, exists := s.rooms[chatroomName]; exists {
+			s.mu.Lock()
+			_, exists := s.rooms[chatroomName]
+			s.mu.Unlock()
+			if exists {
 				conn.Write([]byte("Chatroom dengan nama tersebut sudah ada. Silakan pilih nama lain.\n"))
 				continue
-			} else {
-				wg := sync.WaitGroup{}
-				wg.Add(1)
-				go s.handleCreateChatroom(conn, &wg, chatroomName)
-				wg.Wait()
-				break
 			}
+
+			s.handleCreateChatroom(conn, chatroomName)
+			return // Kembali ke menu utama setelah berhasil membuat
 		}
-	case "6":
-		conn.Write([]byte("Anda memilih untuk keluar dari MariChatting.\n"))
-		s.mu.Lock()
-		for roomName := range s.rooms {
-			delete(s.rooms[roomName], conn)
-		}
-		s.mu.Unlock()
-		s.broadcast(fmt.Sprintf("%s telah meninggalkan MariChatting.\n", s.clients[conn]), conn)
-		conn.Close()
-		return
+	// Case 6 (Keluar) sudah ditangani di loop utama handleClient
 	default:
 		conn.Write([]byte("Pilihan tidak valid. Silakan coba lagi.\n"))
-		return
 	}
 }
 
-func (s *ChatServer) handleJoinLeaveChatroom(conn net.Conn, wg *sync.WaitGroup, chatroom string, operasi string) {
-	defer wg.Done()
+func (s *ChatServer) handleJoinLeaveChatroom(conn net.Conn, chatroom string, operasi string) {
+	s.mu.Lock()
+	clientName := s.clients[conn]
+	s.mu.Unlock()
 
 	switch operasi {
 	case "join":
 		s.mu.Lock()
-		s.rooms[chatroom][conn] = false
-		dummy := s.clients[conn]
+		s.rooms[chatroom][conn] = false // false berarti user join tapi tidak aktif di dalamnya
 		s.mu.Unlock()
-		conn.Write([]byte(fmt.Sprintf("Anda telah bergabung dalam chatroom %s.\n", chatroom)))
-		s.broadcastPerRoom(fmt.Sprintf("%s telah bergabung dalam chatroom %s.\n", dummy, chatroom), chatroom, conn)
+		conn.Write([]byte(fmt.Sprintf("Anda telah bergabung dalam chatroom '%s'.\n", chatroom)))
+		s.broadcastPerRoom(fmt.Sprintf("\n[PEMBERITAHUAN] %s telah bergabung dalam chatroom '%s'.", clientName, chatroom), chatroom, conn)
 	case "leave":
 		s.mu.Lock()
 		delete(s.rooms[chatroom], conn)
-		dummy := s.clients[conn]
 		s.mu.Unlock()
-		conn.Write([]byte(fmt.Sprintf("Anda telah meninggalkan chatroom %s.\n", chatroom)))
-		s.broadcastPerRoom(fmt.Sprintf("%s tidak lagi tergabung dalam chatroom %s.\n", dummy, chatroom), chatroom, conn)
+		conn.Write([]byte(fmt.Sprintf("Anda telah meninggalkan chatroom '%s'.\n", chatroom)))
+		s.broadcastPerRoom(fmt.Sprintf("\n[PEMBERITAHUAN] %s tidak lagi tergabung dalam chatroom '%s'.", clientName, chatroom), chatroom, conn)
 	}
 }
 
 func (s *ChatServer) handleChatroom(conn net.Conn, wg *sync.WaitGroup, roomName string) {
 	defer wg.Done()
+	s.mu.Lock()
 	clientName := s.clients[conn]
+	s.mu.Unlock()
 
+	// Set status client menjadi aktif di room ini
 	s.mu.Lock()
 	s.rooms[roomName][conn] = true
 	s.mu.Unlock()
 
 	reader := bufio.NewReader(conn)
-	conn.Write([]byte(fmt.Sprintf("Selamat datang di room %s! Silahkan ketik pesan Anda!\nKetik '/exit' untuk keluar dari room.\n", roomName)))
-	s.broadcastPerRoom(fmt.Sprintf("%s telah masuk ke chatroom %s.\n", clientName, roomName), roomName, conn)
+	conn.Write([]byte(fmt.Sprintf("\n--- Selamat datang di room [%s] ---\nKetik pesan Anda. Ketik '/kembali' untuk keluar dari room dan kembali ke menu utama.\n", roomName)))
+	s.broadcastPerRoom(fmt.Sprintf("[%s] telah masuk ke dalam '%s'.", clientName, roomName), roomName, conn)
+
 	for {
 		message, err := reader.ReadString('\n')
 		if err != nil {
+			s.handleDisconnect(conn)
 			return
 		}
 		message = strings.TrimSpace(message)
 
-		if message == "/exit" {
-			s.mu.Lock()
-			s.rooms[roomName][conn] = false
-			s.mu.Unlock()
-			conn.Write([]byte(fmt.Sprintf("Anda telah keluar dari chatroom %s.\n", roomName)))
-			s.broadcastPerRoom(fmt.Sprintf("%s telah keluar dari chatroom %s.\n", clientName, roomName), roomName, conn)
-			break
+		if message == "/kembali" {
+			break // Keluar dari loop untuk kembali ke menu utama
 		}
 
-		s.broadcastPerRoom(fmt.Sprintf("[%s]: %s", clientName, message), roomName, conn)
+		if message != "" {
+			s.broadcastPerRoom(fmt.Sprintf("[%s]: %s", clientName, message), roomName, conn)
+		}
 	}
+
+	// Set status client menjadi tidak aktif lagi di room ini
+	s.mu.Lock()
+	// Pastikan koneksi masih ada sebelum mengubah status
+	if _, ok := s.rooms[roomName]; ok {
+		s.rooms[roomName][conn] = false
+	}
+	s.mu.Unlock()
+
+	conn.Write([]byte(fmt.Sprintf("Anda telah keluar dari percakapan chatroom '%s'.\n", roomName)))
+	s.broadcastPerRoom(fmt.Sprintf("\n[PEMBERITAHUAN] %s telah keluar dari percakapan.", clientName), roomName, conn)
 }
 
 func (s *ChatServer) broadcastPerRoom(message string, roomName string, sender net.Conn) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for conn := range s.rooms[roomName] {
-		if conn != sender && s.rooms[roomName][conn] {
-			_, err := conn.Write([]byte(message + "\n"))
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to send message to %s: %v\n", s.clients[conn], err)
+	// Pastikan room masih ada
+	if room, ok := s.rooms[roomName]; ok {
+		for conn, isActive := range room {
+			// Kirim ke semua orang di room kecuali pengirim
+			if conn != sender && isActive {
+				_, err := conn.Write([]byte(message + "\n"))
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Failed to send message to %s: %v\n", s.clients[conn], err)
+				}
 			}
 		}
 	}
 }
 
-// Method receiver untuk broadcast
 func (s *ChatServer) broadcast(message string, sender net.Conn) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for conn := range s.clients {
 		if conn != sender {
-			_, err := conn.Write([]byte(message + "\n"))
+			_, err := conn.Write([]byte(message))
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Failed to send message to %s: %v\n", s.clients[conn], err)
 			}
@@ -402,20 +408,18 @@ func (s *ChatServer) broadcast(message string, sender net.Conn) {
 	}
 }
 
-func (s *ChatServer) handleCreateChatroom(conn net.Conn, wg *sync.WaitGroup, chatroomName string) {
-	defer wg.Done()
-
+func (s *ChatServer) handleCreateChatroom(conn net.Conn, chatroomName string) {
 	s.mu.Lock()
 	s.rooms[chatroomName] = make(map[net.Conn]bool)
+	// Otomatis join setelah membuat, tapi tidak aktif di dalamnya
 	s.rooms[chatroomName][conn] = false
 	clientName := s.clients[conn]
 	s.mu.Unlock()
 
-	conn.Write([]byte(fmt.Sprintf("Chatroom %s telah berhasil dibuat.\n", chatroomName)))
-	s.broadcast(fmt.Sprintf("%s telah membuat chatroom baru: %s", clientName, chatroomName), conn)
+	conn.Write([]byte(fmt.Sprintf("Chatroom '%s' telah berhasil dibuat dan Anda otomatis bergabung.\n", chatroomName)))
+	s.broadcast(fmt.Sprintf("\n[PEMBERITAHUAN] %s telah membuat chatroom baru: %s\n", clientName, chatroomName), conn)
 }
 
-// Mengecek apakah nama sudah dipakai client lain
 func (s *ChatServer) isNameTaken(name string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -425,4 +429,28 @@ func (s *ChatServer) isNameTaken(name string) bool {
 		}
 	}
 	return false
+}
+
+// Fungsi untuk menangani diskoneksi client
+func (s *ChatServer) handleDisconnect(conn net.Conn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Cek apakah client ada di map
+	if name, ok := s.clients[conn]; ok {
+		fmt.Printf("%s disconnected.\n", name)
+
+		// Hapus dari semua room
+		for roomName := range s.rooms {
+			delete(s.rooms[roomName], conn)
+		}
+
+		// Hapus dari daftar client
+		delete(s.clients, conn)
+
+		// Broadcast ke client lain bahwa user telah pergi
+		// Jalankan broadcast di goroutine baru agar tidak deadlock
+		go s.broadcast(fmt.Sprintf("\n[PEMBERITAHUAN] %s telah meninggalkan aplikasi MariChatting.\n", name), conn)
+	}
+	conn.Close()
 }
