@@ -383,9 +383,9 @@ func (s *ChatServer) broadcastPerRoom(message string, roomName string, sender ne
 	defer s.mu.Unlock()
 	// Pastikan room masih ada
 	if room, ok := s.rooms[roomName]; ok {
-		for conn := range room {
+		for conn, isActive := range room {
 			// Kirim ke semua orang di room kecuali pengirim
-			if conn != sender {
+			if conn != sender && isActive {
 				_, err := conn.Write([]byte(message + "\n"))
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "Failed to send message to %s: %v\n", s.clients[conn], err)
